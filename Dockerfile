@@ -15,15 +15,13 @@
 # syntax=docker/dockerfile:1.2
 
 # Build stage, to create the executable
-FROM --platform=linux/amd64 python:3.10-slim-bullseye@sha256:1ee6094f44c67781fa9533a4215f44f80dd3f43a68751ad2c855712116c03b05 as builder
-
-RUN pip install --upgrade pip
+FROM --platform=$TARGETPLATFORM python:3.10-slim-bullseye@sha256:1ee6094f44c67781fa9533a4215f44f80dd3f43a68751ad2c855712116c03b05 as builder
 
 RUN apt-get update && apt-get install -y binutils
 
-# COPY ignores the source directory structure, so using ADD
-#COPY * /home/seat_adjuster/
-ADD . /home/seat_adjuster/
+COPY . /app
+# For this command to work, the vehicle_model must be copied manually from root dir to app dir
+COPY ./vehicle_model /vehicle_model
 
 # Remove this installation for Arm64 once staticx has a prebuilt wheel for Arm64
 RUN /bin/bash -c 'set -ex && \
@@ -34,33 +32,32 @@ RUN /bin/bash -c 'set -ex && \
     pip3 install --no-cache-dir scons; \
     fi'
 
-WORKDIR /home/seat_adjuster/
-
 RUN apt-get install -y git
-RUN pip3 install --no-cache-dir pyinstaller \
+RUN pip3 install --no-cache-dir pyinstaller==5.9.0 \
     && pip3 install --no-cache-dir patchelf==0.17.0.0 \
     && pip3 install --no-cache-dir staticx \
-    && pip3 install --no-cache-dir -r requirements.txt \
-    && pip3 install --no-cache-dir -r requirements-links.txt
+    && pip3 install --no-cache-dir -r ./app/requirements.txt \
+    && pip3 install --no-cache-dir -r ./app/requirements-links.txt \
+    && pip3 install --no-cache-dir /vehicle_model
 
-RUN pyinstaller --clean -F -s src/main.py
+WORKDIR /app
 
-WORKDIR /home/seat_adjuster/dist/
+RUN pyinstaller --clean -F -s --paths=src src/main.py
+
+WORKDIR /app/dist
 
 RUN staticx main run-exe
 
 # Runner stage, to copy the executable
 FROM scratch
 
-COPY --from=builder /home/seat_adjuster/dist/run-exe /dist/
+COPY --from=builder ./app/dist/run-exe /dist/
 
 WORKDIR /tmp
 WORKDIR /dist
 
 ENV PATH="/dist:$PATH"
 
-#LABEL org.opencontainers.image.source="https://github.com/eclipse-velocitas/vehicle-app-python-template"
-
-LABEL org.opencontainers.image.source=https://github.com/antaradey-itk/vehicle-apps-images
+LABEL org.opencontainers.image.source="https://github.com/eclipse-velocitas/vehicle-app-python-template"
 
 CMD ["./run-exe"]
